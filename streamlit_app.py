@@ -1,25 +1,18 @@
-import streamlit as st
-
-st.title("داشبورد تحلیل پایان‌نامه‌های علوم پزشکی با Gemini ")
-st.write(
-    "Let's start building! For help and inspiration, head over to [docs.streamlit.io](https://docs.streamlit.io/)."
-)
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
-import json
 import asyncio
 import httpx  # For making asynchronous HTTP requests
+import json
 
 # -----------------------------------------------------------------------------
 # تنظیمات صفحه
 # -----------------------------------------------------------------------------
-st.set_page_config(layout="wide", page_title="داشبورد تحلیل پایان‌نامه‌های علوم پزشکی با Gemini")
+st.set_page_config(layout="wide", page_title="داشبورد تحلیل با Gemini 2.5 Flash")
 
 # -----------------------------------------------------------------------------
-# تعریف شاخص‌های ارزیابی (بدون کلیدواژه)
+# تعریف شاخص‌های ارزیابی
 # -----------------------------------------------------------------------------
-# کلیدواژه‌ها حذف شده‌اند چون تحلیل به طور کامل توسط مدل Gemini انجام می‌شود.
 ANALYSIS_CRITERIA = {
     "حوزه علمی": {
         "labels": ["پزشکی بالینی", "دندانپزشکی", "داروسازی", "علوم پایه پزشکی", "بهداشت و اپیدمیولوژی", "پرستاری و مامایی", "توانبخشی و پیراپزشکی"],
@@ -42,17 +35,20 @@ ANALYSIS_CRITERIA = {
 # توابع اصلی برای پردازش و تحلیل با Gemini
 # -----------------------------------------------------------------------------
 
-async def call_gemini_api(prompt):
+async def call_gemini_api(prompt, api_key):
     """
-    یک فراخوانی API ناهمزمان به مدل Gemini ارسال می‌کند.
+    یک فراخوانی API ناهمزمان به مدل Gemini با استفاده از کلید API کاربر ارسال می‌کند.
     """
-    # URL برای دسترسی به مدل Gemini Flash بدون نیاز به کلید (طبق دستورالعمل محیط)
-    api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key="
+    if not api_key:
+        st.error("کلید API گوگل وارد نشده است. لطفاً کلید خود را برای ادامه وارد کنید.")
+        return None
+        
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
     
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.1,
+            "temperature": 0.0,
             "topP": 0.95,
             "maxOutputTokens": 50,
         }
@@ -60,15 +56,12 @@ async def call_gemini_api(prompt):
     
     headers = {'Content-Type': 'application/json'}
     
-    # استفاده از httpx برای ارسال درخواست‌های ناهمزمان
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
-            # ارسال درخواست به API
             response = await client.post(api_url, json=payload, headers=headers)
-            response.raise_for_status()  # ایجاد خطا در صورت پاسخ ناموفق (e.g., 4xx or 5xx)
+            response.raise_for_status()
             result = response.json()
             
-            # استخراج متن از پاسخ دریافتی
             if (result.get('candidates') and 
                 result['candidates'][0].get('content') and 
                 result['candidates'][0]['content'].get('parts')):
@@ -76,11 +69,18 @@ async def call_gemini_api(prompt):
                 text_response = result['candidates'][0]['content']['parts'][0].get('text', '').strip()
                 return text_response
             else:
-                # مدیریت پاسخ‌های نامعتبر یا مسدود شده
                 error_info = result.get('promptFeedback', 'جزئیات موجود نیست.')
                 st.warning(f"پاسخ مورد انتظار از مدل دریافت نشد. دلیل: {error_info}")
                 return None
 
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403:
+                st.error("خطای 403: دسترسی ممنوع. لطفاً از معتبر بودن و فعال بودن کلید API گوگل خود اطمینان حاصل کنید.")
+            elif e.response.status_code == 400:
+                 st.error(f"خطای 400: درخواست نامعتبر. ممکن است مشکل از فرمت درخواست یا کلید API باشد. جزئیات: {e.response.text}")
+            else:
+                st.error(f"خطا در ارتباط با سرور Gemini: {e}")
+            return None
         except httpx.RequestError as e:
             st.error(f"خطا در برقراری ارتباط با سرویس Gemini: {e}")
             return None
@@ -89,41 +89,37 @@ async def call_gemini_api(prompt):
             return None
 
 
-async def analyze_text_with_gemini(text, criterion_name, labels, default_label):
+async def analyze_text_with_gemini(text, criterion_name, labels, default_label, api_key):
     """
     متن را با استفاده از مدل Gemini و یک پرامپت ساختاریافته تحلیل می‌کند.
     """
-    # ساخت یک پرامپت (دستور) دقیق برای هدایت مدل به سمت پاسخ مطلوب
     prompt = f"""
-    شما یک دستیار متخصص در تحلیل متون علمی و پایان‌نامه‌های حوزه علوم پزشکی هستید.
-    متن زیر که شامل عنوان و چکیده یک پایان‌نامه است را با دقت تحلیل کنید.
-    وظیفه شما این است که بر اساس محتوای متن، مشخص کنید این پایان‌نامه به کدام یک از دسته‌های زیر در شاخص «{criterion_name}» تعلق دارد.
+    You are an expert assistant specializing in analyzing scientific texts.
+    Analyze the following Persian thesis text based on the criterion: "{criterion_name}".
+    Choose the single best-fitting category from this list:
+    [{', '.join(labels)}]
 
-    دسته‌های ممکن:
-    - {', '.join(labels)}
+    Output ONLY the category name in Persian and nothing else.
 
-    لطفاً فقط و فقط نام دقیق یکی از دسته‌های بالا را به عنوان پاسخ خروجی دهید. هیچ توضیح اضافه‌ای ندهید.
-
-    متن پایان‌نامه:
+    Thesis text:
     ---
     {text}
     ---
     """
     
-    response_text = await call_gemini_api(prompt)
+    response_text = await call_gemini_api(prompt, api_key)
     
-    # پاک‌سازی و اعتبارسنجی پاسخ برای اطمینان از تطابق با دسته‌های موجود
     if response_text:
-        cleaned_response = response_text.replace("*", "").strip()
+        cleaned_response = response_text.replace("*", "").replace("\"", "").strip()
         if cleaned_response in labels:
             return cleaned_response
     
     return default_label
 
 
-async def process_theses_async(df):
+async def process_theses_async(df, api_key):
     """
-    دیتافریم ورودی را به صورت ناهمزمان پردازش کرده و نتایج تحلیل را برمی‌گرداند.
+    دیتافریم ورودی را به صورت ناهمزمان با Gemini پردازش کرده و نتایج تحلیل را برمی‌گرداند.
     """
     results = []
     progress_bar = st.progress(0, text="در حال آماده‌سازی برای تحلیل...")
@@ -139,7 +135,6 @@ async def process_theses_async(df):
         full_text = f"عنوان: {title}\nچکیده: {abstract}"
         analysis_result = {"عنوان": title}
         
-        # ایجاد تسک‌های ناهمزمان برای هر شاخص از یک پایان‌نامه
         tasks = []
         for criterion, data in ANALYSIS_CRITERIA.items():
             default_label = "نامشخص"
@@ -148,10 +143,9 @@ async def process_theses_async(df):
             elif criterion == "قابلیت تجاری‌سازی": default_label = "پتانسیل کم"
             elif criterion == "همکاری با صنعت/نهاد غیردانشگاهی": default_label = "بدون همکاری"
             
-            task = analyze_text_with_gemini(full_text, criterion, data["labels"], default_label)
+            task = analyze_text_with_gemini(full_text, criterion, data["labels"], default_label, api_key)
             tasks.append(task)
         
-        # اجرای همزمان تسک‌ها برای یک پایان‌نامه و جمع‌آوری نتایج
         analyzed_labels = await asyncio.gather(*tasks)
         
         for i, criterion in enumerate(ANALYSIS_CRITERIA.keys()):
@@ -159,7 +153,6 @@ async def process_theses_async(df):
             
         results.append(analysis_result)
         
-        # به‌روزرسانی نوار پیشرفت
         progress_text = f"در حال تحلیل پایان‌نامه {index + 1} از {total_rows}..."
         progress_bar.progress((index + 1) / total_rows, text=progress_text)
 
@@ -170,14 +163,14 @@ async def process_theses_async(df):
 # رابط کاربری داشبورد (Streamlit UI)
 # -----------------------------------------------------------------------------
 
-st.title("♊️ داشبورد تحلیل پایان‌نامه‌های علوم پزشکی با Gemini")
+st.title("♊️ داشبورد تحلیل پایان‌نامه‌ها با Gemini (2.5 Flash)")
 st.markdown("""
-این ابزار با استفاده از مدل هوش مصنوعی **Gemini 2.5 Flash**، پتانسیل پایان‌نامه‌های حوزه علوم پزشکی را بر اساس شاخص‌های تخصصی ارزیابی می‌کند.
-
-**راهنما:**
-1.  یک فایل اکسل (`.xlsx` یا `.xls`) شامل ستون‌های **`عنوان`** و **`چکیده`** آماده کنید.
-2.  فایل را از طریق دکمه زیر بارگذاری کرده و روی دکمه تحلیل کلیک کنید.
+این ابزار با استفاده از سرویس **Google AI (Gemini)**، پتانسیل پایان‌نامه‌های حوزه علوم پزشکی را ارزیابی می‌کند.
 """)
+
+st.info("**مهم:** برای استفاده از این ابزار، به یک کلید API از **Google AI Studio** نیاز دارید.")
+
+api_key = st.text_input("🔑 لطفاً کلید API گوگل (Google AI API Key) خود را اینجا وارد کنید:", type="password", help="کلید خود را می‌توانید به صورت رایگان از Google AI Studio دریافت کنید.")
 
 uploaded_file = st.file_uploader("فایل اکسل خود را اینجا بارگذاری کنید", type=["xlsx", "xls"])
 
@@ -192,10 +185,9 @@ if uploaded_file:
             st.markdown("### پیش‌نمایش داده‌های ورودی")
             st.dataframe(df.head())
 
-            if st.button("🔬 شروع تحلیل با Gemini", type="primary", use_container_width=True):
-                with st.spinner("لطفاً صبر کنید... در حال ارتباط با سرورهای Gemini و تحلیل داده‌ها... این فرآیند ممکن است زمان‌بر باشد."):
-                    # اجرای تابع ناهمزمان اصلی
-                    result_df = asyncio.run(process_theses_async(df))
+            if st.button("شروع تحلیل با Gemini", type="primary", use_container_width=True, disabled=not api_key):
+                with st.spinner("لطفاً صبر کنید... در حال ارتباط با سرورهای Gemini و تحلیل داده‌ها..."):
+                    result_df = asyncio.run(process_theses_async(df, api_key))
                 
                 st.balloons()
                 st.markdown("---")
@@ -210,7 +202,7 @@ if uploaded_file:
                 st.download_button(
                     label="📥 دانلود نتایج در قالب CSV",
                     data=csv,
-                    file_name='tahlil_gemini_olom_pezeshki.csv',
+                    file_name='tahlil_gemini_flash.csv',
                     mime='text/csv',
                     use_container_width=True
                 )
@@ -218,4 +210,5 @@ if uploaded_file:
     except Exception as e:
         st.error(f"یک خطای غیرمنتظره در پردازش فایل رخ داد: {e}")
 else:
-    st.info("منتظر بارگذاری فایل اکسل شما هستیم...")
+    st.info("ابتدا کلید API خود را وارد کرده و سپس فایل اکسل را بارگذاری کنید.")
+
