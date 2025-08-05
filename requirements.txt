@@ -1,6 +1,2 @@
-streamlit
-pandas
-json
-asyncio
 httpx 
 openpyxl
