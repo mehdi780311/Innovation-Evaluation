@@ -51,7 +51,26 @@ async def call_gemini_api(prompt, api_key):
             "temperature": 0.0,
             "topP": 0.95,
             "maxOutputTokens": 50,
-        }
+        },
+        # FIX: Added safety settings to prevent blocking of academic/medical content.
+        "safetySettings": [
+            {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_NONE"
+            },
+            {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_NONE"
+            }
+        ]
     }
     
     headers = {'Content-Type': 'application/json'}
@@ -69,8 +88,8 @@ async def call_gemini_api(prompt, api_key):
                 text_response = result['candidates'][0]['content']['parts'][0].get('text', '').strip()
                 return text_response
             else:
-                error_info = result.get('promptFeedback', 'جزئیات موجود نیست.')
-                st.warning(f"پاسخ مورد انتظار از مدل دریافت نشد. دلیل: {error_info}")
+                # Improved error logging to show the full API response for debugging
+                st.warning(f"پاسخ مورد انتظار از مدل دریافت نشد. پاسخ کامل از API: {json.dumps(result, indent=2)}")
                 return None
 
         except httpx.HTTPStatusError as e:
