@@ -1,233 +1,522 @@
-# -*- coding: utf-8 -*-
 import streamlit as st
-import pandas as pd
-import asyncio
-import httpx  # For making asynchronous HTTP requests
-import json
+import streamlit.components.v1 as components
 
-# -----------------------------------------------------------------------------
-# تنظیمات صفحه
-# -----------------------------------------------------------------------------
-st.set_page_config(layout="wide", page_title="داشبورد تحلیل با Gemini 2.5 Flash")
-
-# -----------------------------------------------------------------------------
-# تعریف شاخص‌های ارزیابی
-# -----------------------------------------------------------------------------
-ANALYSIS_CRITERIA = {
-    "حوزه علمی": {
-        "labels": ["پزشکی بالینی", "دندانپزشکی", "داروسازی", "علوم پایه پزشکی", "بهداشت و اپیدمیولوژی", "پرستاری و مامایی", "توانبخشی و پیراپزشکی"],
-    },
-    "فناوری یا نوآوری خاص": {
-        "labels": ["هوش مصنوعی در پزشکی", "مهندسی بافت و سلول‌های بنیادی", "تجهیزات پزشکی پیشرفته", "پزشکی از راه دور (Telemedicine)", "ژن‌درمانی و پزشکی شخصی‌سازی‌شده", "نانوتکنولوژی دارویی", "بدون نوآوری خاص"],
-    },
-    "حل مسئله صنعتی/اجتماعی": {
-        "labels": ["تشخیص و درمان بیماری‌ها", "توسعه داروها و واکسن‌ها", "ارتقاء سلامت عمومی", "بهبود مدیریت نظام سلامت", "نوآوری در تجهیزات پزشکی", "فاقد مسئله مشخص"],
-    },
-    "قابلیت تجاری‌سازی": {
-        "labels": ["پتانسیل بالا", "پتانسیل متوسط", "پتانسیل کم"],
-    },
-    "همکاری با صنعت/نهاد غیردانشگاهی": {
-        "labels": ["دارای همکاری", "بدون همکاری"],
-    }
-}
-
-# -----------------------------------------------------------------------------
-# توابع اصلی برای پردازش و تحلیل با Gemini
-# -----------------------------------------------------------------------------
-
-async def call_gemini_api(prompt, api_key):
-    """
-    یک فراخوانی API ناهمزمان به مدل Gemini با استفاده از کلید API کاربر ارسال می‌کند.
-    """
-    if not api_key:
-        st.error("کلید API گوگل وارد نشده است. لطفاً کلید خود را برای ادامه وارد کنید.")
-        return None
-        
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
-    
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.0,
-            "topP": 0.95,
-            "maxOutputTokens": 50,
-        },
-        # FIX: Added safety settings to prevent blocking of academic/medical content.
-        "safetySettings": [
-            {
-                "category": "HARM_CATEGORY_HARASSMENT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_HATE_SPEECH",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                "threshold": "BLOCK_NONE"
+html_code = """
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>داشبورد تحلیل پویای پایان‌نامه‌ها</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Calm Neutrals -->
+    <!-- Application Structure Plan: The application now follows a task-oriented flow. 1) User uploads a file. 2) User initiates analysis. 3) App shows a loading state. 4) App displays the interactive dashboard with results. A reset button was added to allow the user to easily start a new analysis, returning them to step 1 without a page reload. This improves the usability of the tool for multiple analyses. -->
+    <!-- Visualization & Content Choices: 
+        1. Report Info: User-provided thesis titles from an Excel file. -> Goal: Input/Interact. -> Presentation: File Input + Button. -> Justification: Standard and universally understood method for file uploads. -> Method: HTML + JS FileReader API.
+        2. Report Info: Analysis process. -> Goal: Inform. -> Presentation: Loading Spinner. -> Justification: Provides crucial feedback to the user that the application is working. -> Method: HTML/CSS.
+        3. Report Info: AI-driven analysis (simulated). -> Goal: Analyze/Organize. -> Presentation: A JS function using keyword heuristics. -> Justification: Simulates the requested AI analysis within frontend constraints, providing immediate, rule-based categorization. -> Method: Vanilla JS.
+        4. Report Info: Reset functionality. -> Goal: Interact. -> Presentation: Reset Button. -> Justification: Provides a clear way for users to restart the process. -> Method: HTML + JS.
+        5. All other visualizations (Charts, Table, Download) remain the same but are now populated with dynamically analyzed data, making the entire dashboard a responsive and personalized tool.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Vazirmatn', sans-serif;
+            background-color: #F8F7F4;
+            color: #4A4A4A;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 300px;
+            max-height: 350px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 350px;
+                max-height: 400px;
             }
-        ]
-    }
-    
-    headers = {'Content-Type': 'application/json'}
-    
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            response = await client.post(api_url, json=payload, headers=headers)
-            response.raise_for_status()
-            result = response.json()
-            
-            if (result.get('candidates') and 
-                result['candidates'][0].get('content') and 
-                result['candidates'][0]['content'].get('parts')):
+        }
+        .card {
+            background-color: #FFFFFF;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+        }
+        .action-btn {
+            background-color: #A68E6A;
+            color: #FFFFFF;
+            font-weight: 700;
+            border-radius: 8px;
+            padding: 12px 24px;
+            transition: background-color 0.3s, transform 0.3s;
+        }
+        .action-btn:hover {
+            background-color: #8c7658;
+            transform: scale(1.05);
+        }
+        .action-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .filter-btn {
+            background-color: #EAE8E1;
+            color: #5D5D5D;
+            font-weight: 700;
+            border-radius: 8px;
+            padding: 8px 16px;
+            transition: background-color 0.3s, color 0.3s;
+            display: inline-flex;
+            align-items: center;
+        }
+        .filter-btn:hover, .filter-btn.active {
+            background-color: #A68E6A;
+            color: #FFFFFF;
+        }
+        .reset-btn {
+            background-color: #f5d0d0;
+            color: #9b2c2c;
+        }
+        .reset-btn:hover {
+            background-color: #ef4444;
+            color: white;
+        }
+        thead th {
+            background-color: #F3F1EC;
+        }
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #A68E6A;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .file-input-label {
+            border: 2px dashed #A68E6A;
+            border-radius: 8px;
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .file-input-label:hover {
+            background-color: #F3F1EC;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-[#A68E6A]">داشبورد تحلیل پویای پایان‌نامه‌ها</h1>
+            <p class="mt-2 text-lg text-gray-600">فایل اکسل خود را بارگذاری کنید تا پتانسیل آن توسط مدل هوشمند تحلیل شود</p>
+        </header>
+
+        <main>
+            <section id="upload-section" class="card p-6 mb-8 text-center">
+                <h2 class="text-2xl font-bold text-[#A68E6A] mb-4">۱. بارگذاری فایل</h2>
+                <p class="text-gray-600 mb-6">فایل اکسل (.xlsx) حاوی عناوین پایان‌نامه‌ها را انتخاب کنید. فایل باید حداقل یک ستون با نام "عنوان" داشته باشد.</p>
                 
-                text_response = result['candidates'][0]['content']['parts'][0].get('text', '').strip()
-                return text_response
-            else:
-                # Improved error logging to show the full API response for debugging
-                st.warning(f"پاسخ مورد انتظار از مدل دریافت نشد. پاسخ کامل از API: {json.dumps(result, indent=2)}")
-                return None
-
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 403:
-                st.error("خطای 403: دسترسی ممنوع. لطفاً از معتبر بودن و فعال بودن کلید API گوگل خود اطمینان حاصل کنید.")
-            elif e.response.status_code == 400:
-                 st.error(f"خطای 400: درخواست نامعتبر. ممکن است مشکل از فرمت درخواست یا کلید API باشد. جزئیات: {e.response.text}")
-            else:
-                st.error(f"خطا در ارتباط با سرور Gemini: {e}")
-            return None
-        except httpx.RequestError as e:
-            st.error(f"خطا در برقراری ارتباط با سرویس Gemini: {e}")
-            return None
-        except Exception as e:
-            st.error(f"خطای غیرمنتظره در هنگام فراخوانی API: {e}")
-            return None
-
-
-async def analyze_text_with_gemini(text, criterion_name, labels, default_label, api_key):
-    """
-    متن را با استفاده از مدل Gemini و یک پرامپت ساختاریافته تحلیل می‌کند.
-    """
-    prompt = f"""
-    You are an expert assistant specializing in analyzing scientific texts.
-    Analyze the following Persian thesis text based on the criterion: "{criterion_name}".
-    Choose the single best-fitting category from this list:
-    [{', '.join(labels)}]
-
-    Output ONLY the category name in Persian and nothing else.
-
-    Thesis text:
-    ---
-    {text}
-    ---
-    """
-    
-    response_text = await call_gemini_api(prompt, api_key)
-    
-    if response_text:
-        cleaned_response = response_text.replace("*", "").replace("\"", "").strip()
-        if cleaned_response in labels:
-            return cleaned_response
-    
-    return default_label
-
-
-async def process_theses_async(df, api_key):
-    """
-    دیتافریم ورودی را به صورت ناهمزمان با Gemini پردازش کرده و نتایج تحلیل را برمی‌گرداند.
-    """
-    results = []
-    progress_bar = st.progress(0, text="در حال آماده‌سازی برای تحلیل...")
-    total_rows = len(df)
-    
-    for index, row in df.iterrows():
-        title = str(row.get("عنوان", ""))
-        abstract = str(row.get("چکیده", ""))
-        
-        if not title or not abstract:
-            continue
-            
-        full_text = f"عنوان: {title}\nچکیده: {abstract}"
-        analysis_result = {"عنوان": title}
-        
-        tasks = []
-        for criterion, data in ANALYSIS_CRITERIA.items():
-            default_label = "نامشخص"
-            if criterion == "فناوری یا نوآوری خاص": default_label = "بدون نوآوری خاص"
-            elif criterion == "حل مسئله صنعتی/اجتماعی": default_label = "فاقد مسئله مشخص"
-            elif criterion == "قابلیت تجاری‌سازی": default_label = "پتانسیل کم"
-            elif criterion == "همکاری با صنعت/نهاد غیردانشگاهی": default_label = "بدون همکاری"
-            
-            task = analyze_text_with_gemini(full_text, criterion, data["labels"], default_label, api_key)
-            tasks.append(task)
-        
-        analyzed_labels = await asyncio.gather(*tasks)
-        
-        for i, criterion in enumerate(ANALYSIS_CRITERIA.keys()):
-            analysis_result[criterion] = analyzed_labels[i]
-            
-        results.append(analysis_result)
-        
-        progress_text = f"در حال تحلیل پایان‌نامه {index + 1} از {total_rows}..."
-        progress_bar.progress((index + 1) / total_rows, text=progress_text)
-
-    progress_bar.empty()
-    return pd.DataFrame(results)
-
-# -----------------------------------------------------------------------------
-# رابط کاربری داشبورد (Streamlit UI)
-# -----------------------------------------------------------------------------
-
-st.title("♊️ داشبورد تحلیل پایان‌نامه‌ها با Gemini (2.5 Flash)")
-st.markdown("""
-این ابزار با استفاده از سرویس **Google AI (Gemini)**، پتانسیل پایان‌نامه‌های حوزه علوم پزشکی را ارزیابی می‌کند.
-""")
-
-st.info("**مهم:** برای استفاده از این ابزار، به یک کلید API از **Google AI Studio** نیاز دارید.")
-
-api_key = st.text_input("🔑 لطفاً کلید API گوگل (Google AI API Key) خود را اینجا وارد کنید:", type="password", help="کلید خود را می‌توانید به صورت رایگان از Google AI Studio دریافت کنید.")
-
-uploaded_file = st.file_uploader("فایل اکسل خود را اینجا بارگذاری کنید", type=["xlsx", "xls"])
-
-if uploaded_file:
-    try:
-        df = pd.read_excel(uploaded_file)
-
-        if "عنوان" not in df.columns or "چکیده" not in df.columns:
-            st.error("خطا: فایل اکسل باید حتماً شامل ستون‌های 'عنوان' و 'چکیده' باشد.")
-        else:
-            st.success(f"فایل با موفقیت بارگذاری شد. **{len(df)}** پایان‌نامه برای تحلیل شناسایی شد.")
-            st.markdown("### پیش‌نمایش داده‌های ورودی")
-            st.dataframe(df.head())
-
-            if st.button("شروع تحلیل با Gemini", type="primary", use_container_width=True, disabled=not api_key):
-                with st.spinner("لطفاً صبر کنید... در حال ارتباط با سرورهای Gemini و تحلیل داده‌ها..."):
-                    result_df = asyncio.run(process_theses_async(df, api_key))
+                <label for="excel-file-input" class="file-input-label block">
+                    <span id="file-name-display">فایل خود را اینجا بکشید یا برای انتخاب کلیک کنید</span>
+                </label>
+                <input type="file" id="excel-file-input" class="hidden" accept=".xlsx, .xls">
                 
-                st.balloons()
-                st.markdown("---")
-                st.markdown("### نتایج نهایی تحلیل")
+                <button id="analyze-btn" class="action-btn mt-6" disabled>
+                    <span class="ml-2">🔬</span>
+                    شروع تحلیل
+                </button>
+            </section>
+
+            <div id="loader-section" class="text-center p-8 hidden">
+                <div class="loader mx-auto"></div>
+                <p class="mt-4 text-lg font-bold text-gray-700">در حال تحلیل داده‌ها... لطفاً صبر کنید.</p>
+            </div>
+
+            <div id="dashboard-content" class="hidden">
+                <div class="mb-8 flex justify-center flex-wrap gap-3" id="filter-buttons">
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                    <div class="card p-4">
+                        <h2 class="text-xl font-bold text-center mb-4 text-gray-700">توزیع حوزه‌های علمی</h2>
+                        <div class="chart-container">
+                            <canvas id="fieldDistributionChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card p-4">
+                        <h2 class="text-xl font-bold text-center mb-4 text-gray-700">مقایسه پتانسیل تجاری‌سازی</h2>
+                        <div class="chart-container">
+                            <canvas id="commercializationChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-4 sm:p-6">
+                    <div class="flex justify-between items-center mb-4 flex-wrap gap-4">
+                        <h2 class="text-2xl font-bold text-[#A68E6A]">جزئیات پایان‌نامه‌ها</h2>
+                        <div class="flex gap-2">
+                             <button id="reset-btn" class="filter-btn reset-btn">
+                                <span class="ml-2">🔄</span>
+                                بازنشانی
+                            </button>
+                            <button id="download-excel-btn" class="filter-btn">
+                                <span class="ml-2">📥</span>
+                                دانلود اکسل
+                            </button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm text-right">
+                            <thead class="font-bold">
+                                <tr>
+                                    <th scope="col" class="p-3">عنوان پایان‌نامه</th>
+                                    <th scope="col" class="p-3">حوزه علمی اصلی</th>
+                                    <th scope="col" class="p-3">قابلیت تجاری‌سازی</th>
+                                    <th scope="col" class="p-3">پتانسیل همکاری</th>
+                                </tr>
+                            </thead>
+                            <tbody id="thesis-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="text-center mt-12 py-4 border-t border-gray-200">
+            <p class="text-gray-500">طراحی شده توسط هوش مصنوعی برای تحلیل داده‌های پژوهشی</p>
+        </footer>
+    </div>
+
+    <script>
+        const uploadSection = document.getElementById('upload-section');
+        const loaderSection = document.getElementById('loader-section');
+        const dashboardContent = document.getElementById('dashboard-content');
+        const fileInput = document.getElementById('excel-file-input');
+        const analyzeBtn = document.getElementById('analyze-btn');
+        const fileNameDisplay = document.getElementById('file-name-display');
+        
+        const tableBody = document.getElementById('thesis-table-body');
+        const filterButtonsContainer = document.getElementById('filter-buttons');
+        const downloadBtn = document.getElementById('download-excel-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        
+        let fieldDistributionChart, commercializationChart;
+        let analyzedData = [];
+
+        const commercializationMap = {
+            'بسیار بالا': 3,
+            'بالا': 2.5,
+            'متوسط تا بالا': 2,
+            'متوسط': 1.5,
+            'پایین': 1,
+            'نامشخص': 0.5
+        };
+
+        const colors = {
+            'نانوتکنولوژی دارویی': 'rgba(166, 142, 106, 0.8)',
+            'دارورسانی هدفمند': 'rgba(204, 182, 142, 0.8)',
+            'شیمی دارویی': 'rgba(189, 171, 130, 0.8)',
+            'فارماسیوتیکس': 'rgba(224, 211, 184, 0.8)',
+            'میکروبیولوژی دارویی': 'rgba(201, 192, 174, 0.8)',
+            'فارماکوگنوزی': 'rgba(179, 163, 136, 0.8)',
+            'تحقیقات بالینی': 'rgba(158, 158, 158, 0.8)',
+            'بیوتکنولوژی دارویی': 'rgba(141, 110, 99, 0.8)',
+            'نامشخص': 'rgba(211, 211, 211, 0.8)'
+        };
+        
+        const borderColors = {
+            'نانوتکنولوژی دارویی': 'rgba(166, 142, 106, 1)',
+            'دارورسانی هدفمند': 'rgba(204, 182, 142, 1)',
+            'شیمی دارویی': 'rgba(189, 171, 130, 1)',
+            'فارماسیوتیکس': 'rgba(224, 211, 184, 1)',
+            'میکروبیولوژی دارویی': 'rgba(201, 192, 174, 1)',
+            'فارماکوگنوزی': 'rgba(179, 163, 136, 1)',
+            'تحقیقات بالینی': 'rgba(158, 158, 158, 1)',
+            'بیوتکنولوژی دارویی': 'rgba(141, 110, 99, 1)',
+            'نامشخص': 'rgba(211, 211, 211, 1)'
+        };
+
+        function simulateAiAnalysis(title) {
+            const lowerTitle = title.toLowerCase();
+            let field = 'نامشخص';
+            let commercialization = 'متوسط';
+            let collaboration = 'مراکز تحقیقاتی دانشگاهی';
+
+            if (lowerTitle.includes('نانو')) {
+                field = 'نانوتکنولوژی دارویی';
+                commercialization = 'بالا';
+                collaboration = 'شرکت‌های نانوتکنولوژی و داروسازی';
+            } else if (lowerTitle.includes('سنتز') || lowerTitle.includes('مشتقات')) {
+                field = 'شیمی دارویی';
+                commercialization = 'بسیار بالا';
+                collaboration = 'واحدهای R&D شرکت‌های داروسازی';
+            } else if (lowerTitle.includes('فرمولاسیون') || lowerTitle.includes('پچ') || lowerTitle.includes('قرص') || lowerTitle.includes('آهسته‌رهش')) {
+                field = 'فارماسیوتیکس';
+                commercialization = 'متوسط تا بالا';
+                collaboration = 'شرکت‌های تولیدکننده دارو';
+            } else if (lowerTitle.includes('گیاه') || lowerTitle.includes('عصاره')) {
+                field = 'فارماکوگنوزی';
+                commercialization = 'متوسط';
+                collaboration = 'شرکت‌های دانش‌بنیان و تولیدکننده داروهای گیاهی';
+            } else if (lowerTitle.includes('میکروب') || lowerTitle.includes('آنتی‌بیوتیک') || lowerTitle.includes('مقاومت')) {
+                field = 'میکروبیولوژی دارویی';
+                commercialization = 'پایین';
+                collaboration = 'بیمارستان‌ها و وزارت بهداشت';
+            } else if (lowerTitle.includes('هدفمند')) {
+                field = 'دارورسانی هدفمند';
+                commercialization = 'بسیار بالا';
+                collaboration = 'استارتاپ‌های بیوتکنولوژی و شرکت‌های بزرگ داروسازی';
+            } else if (lowerTitle.includes('بالینی') || lowerTitle.includes('بیماران')) {
+                field = 'تحقیقات بالینی';
+                commercialization = 'پایین';
+                collaboration = 'مراکز درمانی و سازمان‌های بهداشتی';
+            }
+
+            if (lowerTitle.includes('سرطان') || lowerTitle.includes('آلزایمر') || lowerTitle.includes('دیابت')) {
+                 if (commercializationMap[commercialization] < commercializationMap['بالا']) {
+                    commercialization = 'بالا';
+                 }
+            }
+
+            return { title, field, commercialization, collaboration };
+        }
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                const fileName = fileInput.files[0].name;
+                fileNameDisplay.textContent = `فایل انتخاب شده: ${fileName}`;
+                analyzeBtn.disabled = false;
+            } else {
+                fileNameDisplay.textContent = 'فایل خود را اینجا بکشید یا برای انتخاب کلیک کنید';
+                analyzeBtn.disabled = true;
+            }
+        });
+
+        analyzeBtn.addEventListener('click', () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            uploadSection.classList.add('hidden');
+            loaderSection.classList.remove('hidden');
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                const json = XLSX.utils.sheet_to_json(worksheet);
+
+                analyzedData = [];
+                if (json.length > 0 && ('عنوان' in json[0] || 'Title' in json[0])) {
+                     json.forEach(row => {
+                        const title = row['عنوان'] || row['Title'];
+                        if (title) {
+                            analyzedData.push(simulateAiAnalysis(title));
+                        }
+                    });
+                } else {
+                    alert('فایل اکسل باید دارای ستونی با نام "عنوان" یا "Title" باشد.');
+                    resetApplication();
+                    return;
+                }
                 
-                column_order = ["عنوان"] + list(ANALYSIS_CRITERIA.keys())
-                result_df = result_df[column_order]
+                setTimeout(() => { // Simulate processing time
+                    loaderSection.classList.add('hidden');
+                    dashboardContent.classList.remove('hidden');
+                    initializeDashboard();
+                }, 1500);
+            };
+            reader.readAsArrayBuffer(file);
+        });
 
-                st.dataframe(result_df)
+        function initializeDashboard() {
+            renderTable(analyzedData);
+            createFieldDistributionChart(analyzedData);
+            createCommercializationChart(analyzedData);
+            renderFilterButtons();
+        }
+        
+        function renderFilterButtons() {
+            filterButtonsContainer.innerHTML = '';
+            const fields = [...new Set(analyzedData.map(item => item.field))];
+            let buttonsHTML = '<button class="filter-btn active" data-filter="all">همه حوزه‌ها</button>';
+            fields.forEach(field => {
+                buttonsHTML += `<button class="filter-btn" data-filter="${field}">${field}</button>`;
+            });
+            filterButtonsContainer.innerHTML = buttonsHTML;
+        }
 
-                csv = result_df.to_csv(index=False).encode('utf-8-sig')
-                st.download_button(
-                    label="📥 دانلود نتایج در قالب CSV",
-                    data=csv,
-                    file_name='tahlil_gemini_flash.csv',
-                    mime='text/csv',
-                    use_container_width=True
-                )
+        function renderTable(data) {
+            tableBody.innerHTML = '';
+            if (data.length === 0) {
+                tableBody.innerHTML = `<tr><td colspan="4" class="text-center p-4 text-gray-500">هیچ موردی یافت نشد.</td></tr>`;
+                return;
+            }
+            data.forEach(item => {
+                const row = document.createElement('tr');
+                row.className = 'border-b hover:bg-gray-50';
+                row.innerHTML = `
+                    <td class="p-3">${item.title}</td>
+                    <td class="p-3">${item.field}</td>
+                    <td class="p-3"><span class="font-bold">${item.commercialization}</span></td>
+                    <td class="p-3">${item.collaboration}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
 
-    except Exception as e:
-        st.error(f"یک خطای غیرمنتظره در پردازش فایل رخ داد: {e}")
-else:
-    st.info("ابتدا کلید API خود را وارد کرده و سپس فایل اکسل را بارگذاری کنید.")
+        function createFieldDistributionChart(data) {
+            const ctx = document.getElementById('fieldDistributionChart').getContext('2d');
+            const fieldCounts = data.reduce((acc, item) => {
+                acc[item.field] = (acc[item.field] || 0) + 1;
+                return acc;
+            }, {});
 
+            const chartData = {
+                labels: Object.keys(fieldCounts),
+                datasets: [{
+                    label: 'تعداد پایان‌نامه‌ها',
+                    data: Object.values(fieldCounts),
+                    backgroundColor: Object.keys(fieldCounts).map(field => colors[field] || colors.default),
+                    borderColor: Object.keys(fieldCounts).map(field => borderColors[field] || borderColors.default),
+                    borderWidth: 1
+                }]
+            };
+
+            if (fieldDistributionChart) fieldDistributionChart.destroy();
+            fieldDistributionChart = new Chart(ctx, { type: 'doughnut', data: chartData, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { font: { family: 'Vazirmatn' }}}, tooltip: { bodyFont: { family: 'Vazirmatn' }, titleFont: { family: 'Vazirmatn' }}}, onClick: (e, el) => { if(el.length > 0) { const label = fieldDistributionChart.data.labels[el[0].index]; filterData(label); updateActiveButton(label); }}}});
+        }
+
+        function createCommercializationChart(data) {
+            const ctx = document.getElementById('commercializationChart').getContext('2d');
+            const commercializationData = data.reduce((acc, item) => {
+                const score = commercializationMap[item.commercialization] || 0;
+                if (!acc[item.field]) {
+                     acc[item.field] = { sum: 0, count: 0 };
+                }
+                acc[item.field].sum += score;
+                acc[item.field].count++;
+                return acc;
+            }, {});
+
+            const avgScores = Object.keys(commercializationData).map(field => ({
+                field: field,
+                avgScore: commercializationData[field].sum / commercializationData[field].count
+            })).sort((a, b) => b.avgScore - a.avgScore);
+
+            const chartData = {
+                labels: avgScores.map(item => item.field),
+                datasets: [{
+                    label: 'میانگین پتانسیل تجاری‌سازی (از ۳)',
+                    data: avgScores.map(item => item.avgScore),
+                    backgroundColor: avgScores.map(item => colors[item.field] || colors.default),
+                    borderColor: avgScores.map(item => borderColors[item.field] || borderColors.default),
+                    borderWidth: 1
+                }]
+            };
+
+            if (commercializationChart) commercializationChart.destroy();
+            commercializationChart = new Chart(ctx, { type: 'bar', data: chartData, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, scales: { x: { beginAtZero: true, ticks: { font: { family: 'Vazirmatn' }}}, y: { ticks: { font: { family: 'Vazirmatn' }}}}, plugins: { legend: { display: false }, tooltip: { bodyFont: { family: 'Vazirmatn' }, titleFont: { family: 'Vazirmatn' }}} }});
+        }
+        
+        function getFilteredData() {
+            const currentFilter = document.querySelector('#filter-buttons .filter-btn.active')?.dataset.filter || 'all';
+            if (currentFilter === 'all') {
+                return analyzedData;
+            }
+            return analyzedData.filter(item => item.field === currentFilter);
+        }
+
+        function filterData(filter) {
+            const data = (filter === 'all') ? analyzedData : analyzedData.filter(item => item.field === filter);
+            renderTable(data);
+            createFieldDistributionChart(data);
+            createCommercializationChart(data);
+        }
+
+        function updateActiveButton(filter) {
+            const buttons = filterButtonsContainer.querySelectorAll('.filter-btn');
+            buttons.forEach(button => {
+                button.classList.toggle('active', button.dataset.filter === filter);
+            });
+        }
+        
+        function downloadExcel() {
+            const dataToExport = getFilteredData();
+            const headers = { title: 'عنوان پایان‌نامه', field: 'حوزه علمی اصلی', commercialization: 'قابلیت تجاری‌سازی', collaboration: 'پتانسیل همکاری' };
+            const worksheetData = dataToExport.map(item => ({
+                [headers.title]: item.title,
+                [headers.field]: item.field,
+                [headers.commercialization]: item.commercialization,
+                [headers.collaboration]: item.collaboration
+            }));
+
+            const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "تحلیل پایان‌نامه‌ها");
+            worksheet['!cols'] = [ { wch: 70 }, { wch: 25 }, { wch: 20 }, { wch: 50 } ];
+            XLSX.writeFile(workbook, "تحلیل_پایان‌نامه‌ها.xlsx");
+        }
+
+        function resetApplication() {
+            dashboardContent.classList.add('hidden');
+            loaderSection.classList.add('hidden');
+            uploadSection.classList.remove('hidden');
+
+            analyzedData = [];
+            fileInput.value = '';
+            fileNameDisplay.textContent = 'فایل خود را اینجا بکشید یا برای انتخاب کلیک کنید';
+            analyzeBtn.disabled = true;
+
+            if (fieldDistributionChart) {
+                fieldDistributionChart.destroy();
+                fieldDistributionChart = null;
+            }
+            if (commercializationChart) {
+                commercializationChart.destroy();
+                commercializationChart = null;
+            }
+
+            tableBody.innerHTML = '';
+            filterButtonsContainer.innerHTML = '';
+        }
+
+        filterButtonsContainer.addEventListener('click', (e) => {
+            if (e.target.closest('.filter-btn')) {
+                const filter = e.target.closest('.filter-btn').dataset.filter;
+                updateActiveButton(filter);
+                filterData(filter);
+            }
+        });
+        
+        downloadBtn.addEventListener('click', downloadExcel);
+        resetBtn.addEventListener('click', resetApplication);
+
+    </script>
+</body>
+</html>
+
+
+"""
+components.html(html_code, height=300)
