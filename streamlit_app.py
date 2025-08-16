@@ -519,4 +519,4 @@ html_code = """
 
 
 """
-components.html(html_code, height=1000)
+components.html(html_code, height=10000)
