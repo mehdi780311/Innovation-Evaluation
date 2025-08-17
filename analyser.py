@@ -106,7 +106,7 @@ st.markdown("این ابزار با استفاده از هوش مصنوعی `avv
 api_key = "aa-RZsBvCNQgDThlKbTtHR95PRocl7QDc6TPjnbX0GJdok26wRS"
 
 st.sidebar.header("راهنما")
-st.sidebar.info("فایل اکسل ورودی باید شامل دو ستون با نام‌های دقیق `Title` و `Abstract` باشد.")
+st.sidebar.info("فایل اکسل ورودی باید شامل دو ستون با نام‌های دقیق `عنوان` و `چکیده` باشد.")
 
 # بخش بارگذاری فایل
 uploaded_file = st.file_uploader("📂 فایل اکسل خود را اینجا بارگذاری کنید:", type=["xlsx"])
@@ -117,9 +117,9 @@ if uploaded_file is not None:
         st.subheader("پیش‌نمایش داده‌های ورودی:")
         st.dataframe(df.head())
 
-        # بررسی وجود ستون‌های الزامی
-        if 'Title' not in df.columns or 'Abstract' not in df.columns:
-            st.error("خطا: فایل اکسل باید حتماً شامل ستون‌های 'Title' و 'Abstract' باشد.")
+        # بررسی وجود ستون‌های الزامی به زبان فارسی
+        if 'عنوان' not in df.columns or 'چکیده' not in df.columns:
+            st.error("خطا: فایل اکسل باید حتماً شامل ستون‌های 'عنوان' و 'چکیده' باشد.")
         elif st.button("🚀 شروع تحلیل"):
             analyses = []
             total_rows = len(df)
@@ -128,8 +128,8 @@ if uploaded_file is not None:
 
             # حلقه برای تحلیل تک تک ردیف‌ها
             for index, row in df.iterrows():
-                title = str(row.get('Title', ''))
-                abstract = str(row.get('Abstract', ''))
+                title = str(row.get('عنوان', ''))
+                abstract = str(row.get('چکیده', ''))
                 
                 # اطمینان از اینکه داده‌ها خالی نیستند
                 if title and abstract:
@@ -147,7 +147,7 @@ if uploaded_file is not None:
             
             # اضافه کردن ستون جدید به دیتافریم
             df_results = df.copy()
-            df_results['AI_Analysis'] = analyses
+            df_results['تحلیل هوش مصنوعی'] = analyses
 
             st.subheader("نتایج تحلیل:")
             st.dataframe(df_results)
