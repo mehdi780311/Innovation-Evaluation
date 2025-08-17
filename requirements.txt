@@ -1,2 +1,3 @@
 httpx 
 openpyxl
+google.generativeai
