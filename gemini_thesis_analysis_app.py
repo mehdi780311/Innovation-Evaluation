@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 import google.generativeai as genai
+import google.api_core.exceptions  # <-- کتابخانه لازم برای مدیریت خطای محدودیت API
 import io
 from time import sleep
 
 # --- Page Configuration ---
-# تنظیمات اولیه صفحه شامل عنوان، آیکون و طرح‌بندی
 st.set_page_config(
     page_title="تحلیلگر نوآوری پایان‌نامه",
     page_icon="💡",
@@ -93,7 +93,6 @@ def parse_response(text):
             elif "تحلیل کلی:" in line:
                 data["تحلیل کلی"] = line.split(':', 1)[1].strip()
     except Exception:
-        # در صورت بروز خطا در تجزیه، از پیام پیش‌فرض استفاده می‌شود.
         pass
     return data
 
@@ -104,7 +103,6 @@ def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='تحلیل_نوآوری')
-        # تنظیم خودکار عرض ستون‌ها برای خوانایی بهتر
         for column in df:
             column_length = max(df[column].astype(str).map(len).max(), len(column)) + 2
             col_idx = df.columns.get_loc(column)
@@ -118,10 +116,7 @@ def to_excel(df):
 st.title("💡 تحلیلگر هوشمند پتانسیل نوآوری پایان‌نامه‌ها")
 st.markdown("این ابزار با استفاده از هوش مصنوعی Gemini و بر اساس **مدل رتبه‌بندی نوآوری**، پتانسیل پایان‌نامه‌ها را تحلیل می‌کند.")
 
-# نوار کناری برای دریافت ورودی‌ها
 st.sidebar.header("تنظیمات")
-
-# 1. ورودی کلید API
 api_key = st.sidebar.text_input("🔑 کلید API گوگل Gemini خود را وارد کنید:", type="password", help="کلید API شما محرمانه باقی می‌ماند و فقط برای این جلسه استفاده می‌شود.")
 
 if not api_key:
@@ -135,7 +130,6 @@ except Exception as e:
     st.error(f"❌ خطا در تنظیم کلید API: لطفاً از معتبر بودن کلید خود اطمینان حاصل کنید.")
     st.stop()
 
-# 2. بارگذاری فایل
 uploaded_file = st.file_uploader("📂 فایل اکسل حاوی عناوین و چکیده‌ها را بارگذاری کنید", type=["xlsx"])
 
 if uploaded_file is not None:
@@ -146,8 +140,6 @@ if uploaded_file is not None:
 
         st.sidebar.header("انتخاب ستون‌ها")
         columns = df.columns.tolist()
-
-        # 3. انتخاب ستون‌ها
         title_col = st.sidebar.selectbox("ستون حاوی **عنوان** را انتخاب کنید:", columns, index=0)
         abstract_col = st.sidebar.selectbox("ستون حاوی **چکیده** را انتخاب کنید:", columns, index=1 if len(columns) > 1 else 0)
 
@@ -172,41 +164,47 @@ if uploaded_file is not None:
                             })
                         else:
                             prompt = create_prompt(title, abstract)
-                            try:
-                                response = model.generate_content(prompt)
-                                parsed_data = parse_response(response.text)
-                                results.append(parsed_data)
-                            except Exception as e:
-                                st.error(f"خطا در ردیف {i+1}: {e}")
-                                results.append({
-                                    "حوزه علمی": "خطا", "فناوری خاص": "خطا", "حل مسئله": "خطا",
-                                    "تجاری‌سازی": "خطا", "همکاری": "خطا", "نمره نهایی": "خطا",
-                                    "پتانسیل نوآوری": "خطا", "تحلیل کلی": str(e)
-                                })
+                            # --- شروع بلوک تلاش مجدد ---
+                            max_retries = 5
+                            retry_delay = 2  # ثانیه
+                            for attempt in range(max_retries):
+                                try:
+                                    response = model.generate_content(prompt)
+                                    parsed_data = parse_response(response.text)
+                                    results.append(parsed_data)
+                                    break  # در صورت موفقیت، از حلقه تلاش مجدد خارج شو
+                                
+                                except google.api_core.exceptions.ResourceExhausted as e:
+                                    if attempt < max_retries - 1:
+                                        st.warning(f"محدودیت API در ردیف {i+1}. تلاش مجدد تا {retry_delay} ثانیه دیگر...")
+                                        sleep(retry_delay)
+                                        retry_delay *= 2  # افزایش زمان انتظار برای تلاش بعدی
+                                    else:
+                                        st.error(f"خطا در ردیف {i+1} پس از {max_retries} تلاش: محدودیت API ادامه دارد.")
+                                        results.append({"تحلیل کلی": "خطا: محدودیت API"})
+                                        break # اگر بعد از همه تلاش‌ها باز هم خطا داد، خارج شو
+                                except Exception as e:
+                                    st.error(f"خطا در ردیف {i+1}: {e}")
+                                    results.append({"تحلیل کلی": f"خطا: {e}"})
+                                    break # در صورت بروز خطای دیگر، از حلقه خارج شو
+                            # --- پایان بلوک تلاش مجدد ---
                         
-                        # یک تأخیر کوتاه برای جلوگیری از رسیدن به محدودیت‌های API
-                        sleep(1)
+                        # تأخیر ثابت بین هر درخواست موفق برای جلوگیری از فشار روی API
+                        sleep(1) 
                         progress_bar.progress((i + 1) / total_rows, text=f"در حال پردازش ردیف {i+1} از {total_rows}")
                     
                 st.success("🎉 تحلیل با موفقیت انجام شد!")
 
-                # ایجاد DataFrame از نتایج و الحاق آن به DataFrame اصلی
                 results_df = pd.DataFrame(results)
-                
-                # تغییر نام ستون‌ها برای وضوح بیشتر در فایل اکسل خروجی
                 results_df.rename(columns={
-                    "حوزه علمی": "امتیاز حوزه علمی",
-                    "فناوری خاص": "امتیاز فناوری خاص",
-                    "حل مسئله": "امتیاز حل مسئله",
-                    "تجاری‌سازی": "امتیاز تجاری‌سازی",
+                    "حوزه علمی": "امتیاز حوزه علمی", "فناوری خاص": "امتیاز فناوری خاص",
+                    "حل مسئله": "امتیاز حل مسئله", "تجاری‌سازی": "امتیاز تجاری‌سازی",
                     "همکاری": "امتیاز همکاری",
                 }, inplace=True)
                 
                 final_df = pd.concat([df, results_df], axis=1)
-
                 st.dataframe(final_df)
 
-                # 4. دکمه دانلود
                 excel_data = to_excel(final_df)
                 st.download_button(
                     label="📥 دانلود فایل اکسل نتایج",
